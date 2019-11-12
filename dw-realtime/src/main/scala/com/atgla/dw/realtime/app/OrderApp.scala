@@ -13,7 +13,7 @@ import org.apache.spark.streaming.{Seconds, StreamingContext}
 object OrderApp {
   def main(args: Array[String]): Unit = {
     val sparkConf = new SparkConf().setMaster("local[*]").setAppName("order_app")
-    val ssc = new StreamingContext(sparkConf, Seconds(5))
+    val ssc = new StreamingContext(sparkConf, Seconds(1))
 
     //val inputDstream:InputDStream[ConsumerRecord[String,String]] = MyKafkaUtil.getKafkaStream(GmallConstants.KAFKA_TOPIC_ORDER,ssc)
 

@@ -1,6 +1,6 @@
 package com.atgla.dw.realtime.bean
 
-case class StartUpLog(mid:String,
+case class StartupLog(mid:String,
                       uid:String,
                       appid:String,
                       area:String,
@@ -10,6 +10,7 @@ case class StartUpLog(mid:String,
                       vs:String,
                       var logDate:String,
                       var logHour:String,
+                      var logHourMinute:String,
                       var ts:Long
                      ) {
 

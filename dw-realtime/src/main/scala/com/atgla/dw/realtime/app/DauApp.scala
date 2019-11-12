@@ -6,7 +6,7 @@ import java.util.Date
 
 import com.alibaba.fastjson.JSON
 import com.atgla.dw.GmallConstants
-import com.atgla.dw.realtime.bean.StartUpLog
+import com.atgla.dw.realtime.bean.StartupLog
 import com.atgla.dw.realtime.utils.{MyKafkaUtil, RedisUtil}
 import org.apache.hadoop.conf.Configuration
 import org.apache.kafka.clients.consumer.ConsumerRecord
@@ -31,9 +31,9 @@ object DauApp {
     //      println(rdd.map(_.value()).collect().mkString("\n"))
     //    })
     // 2 结构转换成case class 补充两个时间字段
-    val startupLogDstream: DStream[StartUpLog] = inputDstream.map { record =>
+    val startupLogDstream: DStream[StartupLog] = inputDstream.map { record =>
       val jsonString: String = record.value()
-      val startupLog: StartUpLog = JSON.parseObject(jsonString, classOf[StartUpLog])
+      val startupLog: StartupLog = JSON.parseObject(jsonString, classOf[StartupLog])
       val formatter = new SimpleDateFormat("yyyy-MM-dd HH")
       val datetimeStr: String = formatter.format(new Date(startupLog.ts))
       val dateTimeArr: Array[String] = datetimeStr.split(" ")
@@ -47,7 +47,7 @@ object DauApp {
 
 
     //2  去重  根据今天访问过的用户清单进行过滤
-    val filteredDstream: DStream[StartUpLog] = startupLogDstream.transform { rdd =>
+    val filteredDstream: DStream[StartupLog] = startupLogDstream.transform { rdd =>
       println("过滤前："+rdd.count())
       val jedis: Jedis = RedisUtil.getJedisClient
       val dateFormat = new SimpleDateFormat("yyyy-MM-dd")
@@ -56,7 +56,7 @@ object DauApp {
       val midSet: util.Set[String] = jedis.smembers(key)
       jedis.close()
       val midBC: Broadcast[util.Set[String]] = ssc.sparkContext.broadcast(midSet)
-      val filteredRDD: RDD[StartUpLog] = rdd.filter { startupLog =>
+      val filteredRDD: RDD[StartupLog] = rdd.filter { startupLog =>
         !midBC.value.contains(startupLog.mid)
       }
       println("过滤后："+filteredRDD.count())
@@ -64,7 +64,7 @@ object DauApp {
 
     }
     //本批次内进行去重
-    val distinctDstream: DStream[StartUpLog] = filteredDstream.map(startuplog => (startuplog.mid, startuplog)).groupByKey().flatMap { case (mid, startupLogItr) =>
+    val distinctDstream: DStream[StartupLog] = filteredDstream.map(startuplog => (startuplog.mid, startuplog)).groupByKey().flatMap { case (mid, startupLogItr) =>
       startupLogItr.take(1)
     }
 
