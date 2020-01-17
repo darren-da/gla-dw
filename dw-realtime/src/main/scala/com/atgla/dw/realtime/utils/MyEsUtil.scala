@@ -65,7 +65,7 @@ object MyEsUtil {
 
   def main(args: Array[String]): Unit = {
     val jest: JestClient = MyEsUtil.getClient
-     val index: Index = new Index.Builder(alertInfo3("dada","yunnan")).index("gmall2019_alert_info3").`type`("_doc").id("4").build()
+     val index: Index = new Index.Builder(alertInfo3("wang5","shanghai")).index("gmall0218_alert_info3").`type`("_doc").id("4").build()
     jest.execute(index)
     close(jest)
   }

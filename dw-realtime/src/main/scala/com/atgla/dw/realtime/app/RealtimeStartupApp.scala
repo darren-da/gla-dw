@@ -7,7 +7,7 @@ import java.util.Date
 import com.alibaba.fastjson.JSON
 import com.atgla.dw.GmallConstants
 import com.atgla.dw.realtime.bean.StartupLog
-import com.atgla.dw.realtime.utils.{MyEsUtil, MyKafkaUtil, RedisUtil}
+import com.atgla.dw.realtime.utils.{EsUtil2, MyKafkaUtil}
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
@@ -18,93 +18,82 @@ import redis.clients.jedis.Jedis
 
 import scala.collection.mutable.ListBuffer
 
-object StartupApp {
+object RealtimeStartupApp {
+  
   def main(args: Array[String]): Unit = {
-    val sparkConf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("gmall-startup")
+    val sparkConf: SparkConf = new SparkConf().setAppName("realtime_startup").setMaster("local[*]")
     val sc = new SparkContext(sparkConf)
+    val ssc = new StreamingContext(sc, Seconds(5))
+    val recordStreaming: InputDStream[ConsumerRecord[String, String]] = MyKafkaUtil.getKafkaStream(GmallConstants.ES_INDEX_DAU, ssc)
 
-    val ssc = new StreamingContext(sc,Seconds(5))
+    //    recordStreaming.foreachRDD(rdd=>
+    //      println(rdd.map(_.value()).collect().mkString("\n"))
+    //    )
+    val startupStringDstream: DStream[String] = recordStreaming.map(_.value())
+    val startUpDstream: DStream[StartupLog] = recordStreaming.map(_.value()).map { json =>
+      val startUpLog: StartupLog = JSON.parseObject(json, classOf[StartupLog])
+      startUpLog
 
-    val recordDstream: InputDStream[ConsumerRecord[String, String]] = MyKafkaUtil.getKafkaStream(GmallConstants.KAFKA_TOPIC_STARTUP,ssc)
-    // 0 验证数据
-    //      recordDstream.map(_.value()).foreachRDD(rdd=>
-    //          println(rdd.collect().mkString("\n"))
-    //        )
-    //    1  转成javabean  结构化
-    val startupDstream: DStream[StartupLog] = recordDstream.map(_.value()).map { jsonString =>
-      val startupLog: StartupLog = JSON.parseObject(jsonString, classOf[StartupLog])
-      val formatDateTime = new SimpleDateFormat("yyyy-MM-dd HH:mm")
-      val logDateTime: String = formatDateTime.format(new Date(startupLog.ts))
-      startupLog.logDate  = logDateTime.split(" ")(0)
-      startupLog.logHourMinute  = logDateTime.split(" ")(1)
-      startupLog.logHour  = logDateTime.split(" ")(1).split(":")(0)
-      startupLog
     }
-    //    2    过滤今日访问过的用户
-    //    startupDstream.filter{startupLog=>
-    //      val jedis:Jedis = RedisUtil.getJedisClient
-    //      val daukey: String = "dau:" + startupLog.logDate
-    //      val isExists: Boolean = jedis.sismember(daukey,startupLog.mid)  //判断是否已经存在
-    //      !isExists   //如果已经存在则不留
-    //    }
-
-
-    //    2   过滤今日访问过的用户   利用广播变量
-    val filteredStartupLogDstream: DStream[StartupLog] = startupDstream.transform { rdd =>
-      println("过滤前共有："+rdd.count())
-
-
-      //driver
-      val jedis: Jedis = RedisUtil.getJedisClient
-      val formatDate = new SimpleDateFormat("yyyy-MM-dd")
-      val today: String = formatDate.format(new Date())
-      val dauSet: util.Set[String] = jedis.smembers("dau:" + today)
+    //1   先做过滤  把redis中的数据与当前批次的数据进行对比 过滤掉已有的数据
+    val filteredDstream: DStream[StartupLog] = startUpDstream.transform { rdd =>
+      println(s" 过滤前 ：rdd.count() = ${rdd.count()}")
+      val jedis = new Jedis(" node101", 6379)
+      val dauSet: util.Set[String] = jedis.smembers("dau:" + new SimpleDateFormat("yyyy-MM-dd").format(new Date()))
+      jedis.close()
       val dauBC: Broadcast[util.Set[String]] = sc.broadcast(dauSet)
-
-      //  executor
-      val filteredRDD: RDD[StartupLog] = rdd.filter { startupLog =>
-        var isExist = false
-        if (dauBC.value != null) {
-          isExist  = dauBC.value.contains(startupLog.mid)
-        }
-        !isExist //如果包含 则过滤掉
+      val filteredRDD: RDD[StartupLog] = rdd .filter { startuplog =>
+        !dauBC.value.contains(startuplog.mid)
       }
 
-
-      println("过滤后共有："+filteredRDD.count())
-
+      println(s" 过滤后 ：rdd.count() = ${filteredRDD.count()}")
       filteredRDD
     }
 
 
 
-    //    3     把今日访问用户保存到redis中    daily active user
-    //    3.1 redis的存储结构  k-v     key: "dau:"+date    value:  mid
+    //2   把新活跃用户的数据保存到redis
 
-    filteredStartupLogDstream.foreachRDD { rdd =>
+    filteredDstream.foreachRDD { rdd =>
 
-      // driver
-      rdd.foreachPartition{startupItr=>
-        //executor
-        val jedis:Jedis = RedisUtil.getJedisClient
-        val list = new ListBuffer[Any]()
-        for (startupLog <- startupItr ) {
-          val daukey: String = "dau:" + startupLog.logDate
+      rdd.foreachPartition { startupItr =>
 
-          jedis.sadd(daukey,startupLog.mid)
+        val jedis = new Jedis("node101", 6379) //driver
+      val list = new ListBuffer[StartupLog]()
+        startupItr.foreach { startupLog =>
+          val datetimeString: String = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(startupLog.ts))
+          val datetimeArray: Array[String] = datetimeString.split(" ")
+          val dateString: String = datetimeArray(0)
+          val timeArray: Array[String] = datetimeArray(1).split(":")
+          val hour: String = timeArray(0)
+          val minute: String = timeArray(1)
+
+          val key = "dau:" + dateString
+          jedis.sadd(key, startupLog.mid)
+
+          //补充 一些时间字段 用户 es中的时间分析
+          startupLog.logDate=dateString
+          startupLog.logHour=hour
+          startupLog.logHourMinute=hour+":"+minute
+
+
           list+=startupLog
         }
         jedis.close()
+        EsUtil2.executeIndexBulk(GmallConstants.ES_INDEX_DAU,list.toList," ")
 
-        MyEsUtil.insertBulk(GmallConstants.ES_INDEX_DAU,list.toList)
 
       }
-
     }
 
-    //目标 es   4 保存es   //利用redis进行去重 ，去重后保存到es
+
+    //3   保存到es中
+
 
     ssc.start()
     ssc.awaitTermination()
+
   }
+
+
 }

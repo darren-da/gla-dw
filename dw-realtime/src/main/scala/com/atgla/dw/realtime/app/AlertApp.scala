@@ -16,7 +16,8 @@ import scala.util.control.Breaks._
 object AlertApp {
 
   def main(args: Array[String]): Unit = {
-    val sparkConf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("alert_info")
+    //val sparkConf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("alert_info")
+    val sparkConf: SparkConf = new SparkConf().setAppName("alert_info")
 
     val ssc = new StreamingContext(sparkConf,Seconds(5))
 
@@ -86,6 +87,7 @@ object AlertApp {
 //                      println(rdd.collect().mkString("\n"))
 //                    }
 //
+
 
 
 
